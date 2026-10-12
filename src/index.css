@@ -8,8 +8,8 @@
 
   body {
     font-family: var(--font-sans);
-    background-color: lightcoral;
-    color: lawngreen;
+    background-color: white;
+    color: black;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
