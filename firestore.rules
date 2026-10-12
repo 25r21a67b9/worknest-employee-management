@@ -1,0 +1,1131 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Hardened Global Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrappedAdmin() {
+      return isVerifiedUser() && request.auth.token.email == '25r21a67b9@mlrit.ac.in';
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() || (
+        isVerifiedUser() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function profileExists(uid) {
+      return exists(/databases/$(database)/documents/profiles/$(uid));
+    }
+
+    // 3. Entity Validation Blueprints (Pillar 2: Anti-Update-Gap)
+
+    function isValidAdminRecord(data) {
+      return data.keys().hasAll(['uid', 'email', 'role', 'grantedByUid', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'email', 'role', 'grantedByUid', 'createdAt', 'updatedAt']) &&
+        isValidId(data.uid) &&
+        data.email is string && data.email.size() >= 5 && data.email.size() <= 120 &&
+        data.role == 'HR' &&
+        isValidId(data.grantedByUid) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidProfile(data) {
+      return data.keys().hasAll([
+          'uid', 'ownerUid', 'hrUid', 'fullName', 'employeeId',
+          'departmentId', 'departmentName', 'designation', 'role',
+          'status', 'managerUid', 'managerName', 'joiningDate',
+          'avatarInitials', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'uid', 'ownerUid', 'hrUid', 'fullName', 'employeeId',
+          'departmentId', 'departmentName', 'designation', 'role',
+          'status', 'managerUid', 'managerName', 'joiningDate',
+          'avatarInitials', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.uid) &&
+        isValidId(data.ownerUid) &&
+        isValidId(data.hrUid) &&
+        data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 100 &&
+        data.employeeId is string && data.employeeId.size() >= 2 && data.employeeId.size() <= 32 && data.employeeId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        isValidId(data.departmentId) &&
+        data.departmentName is string && data.departmentName.size() >= 2 && data.departmentName.size() <= 80 &&
+        data.designation is string && data.designation.size() >= 2 && data.designation.size() <= 80 &&
+        data.role in ['Employee', 'Manager', 'HR'] &&
+        data.status in ['Active', 'Pending Approval', 'On Leave', 'Deactivated'] &&
+        isValidId(data.managerUid) &&
+        data.managerName is string && data.managerName.size() >= 1 && data.managerName.size() <= 100 &&
+        data.joiningDate is string && data.joiningDate.size() == 10 && data.joiningDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+        data.avatarInitials is string && data.avatarInitials.size() >= 1 && data.avatarInitials.size() <= 4 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidProfilePrivate(data) {
+      return data.keys().hasAll(['uid', 'ownerUid', 'email', 'contactNumber', 'emergencyContact', 'address', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['uid', 'ownerUid', 'email', 'contactNumber', 'emergencyContact', 'address', 'createdAt', 'updatedAt']) &&
+        isValidId(data.uid) &&
+        isValidId(data.ownerUid) &&
+        data.email is string && data.email.size() >= 5 && data.email.size() <= 120 &&
+        data.contactNumber is string && data.contactNumber.size() >= 5 && data.contactNumber.size() <= 30 &&
+        data.emergencyContact is string && data.emergencyContact.size() <= 120 &&
+        data.address is string && data.address.size() <= 250 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidDepartment(data) {
+      return data.keys().hasAll(['id', 'name', 'code', 'description', 'headUid', 'headName', 'status', 'visibility', 'createdByUid', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['id', 'name', 'code', 'description', 'headUid', 'headName', 'status', 'visibility', 'createdByUid', 'createdAt', 'updatedAt']) &&
+        isValidId(data.id) &&
+        data.name is string && data.name.size() >= 2 && data.name.size() <= 80 &&
+        data.code is string && data.code.size() >= 2 && data.code.size() <= 20 && data.code.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.description is string && data.description.size() >= 2 && data.description.size() <= 300 &&
+        isValidId(data.headUid) &&
+        data.headName is string && data.headName.size() >= 1 && data.headName.size() <= 100 &&
+        data.status in ['Active', 'Deactivated'] &&
+        data.visibility == 'organization' &&
+        isValidId(data.createdByUid) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidAttendanceRecord(data) {
+      return data.keys().hasAll([
+          'id', 'employeeUid', 'employeeId', 'employeeName', 'departmentName',
+          'managerUid', 'hrUid', 'date', 'checkInTime', 'checkOutTime',
+          'workDurationMinutes', 'status', 'correctionReason', 'correctedByUid',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'employeeUid', 'employeeId', 'employeeName', 'departmentName',
+          'managerUid', 'hrUid', 'date', 'checkInTime', 'checkOutTime',
+          'workDurationMinutes', 'status', 'correctionReason', 'correctedByUid',
+          'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.employeeUid) &&
+        data.employeeId is string && data.employeeId.size() >= 2 && data.employeeId.size() <= 32 && data.employeeId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.employeeName is string && data.employeeName.size() >= 2 && data.employeeName.size() <= 100 &&
+        data.departmentName is string && data.departmentName.size() >= 2 && data.departmentName.size() <= 80 &&
+        isValidId(data.managerUid) &&
+        isValidId(data.hrUid) &&
+        data.date is string && data.date.size() == 10 && data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+        data.checkInTime is string && data.checkInTime.size() >= 1 && data.checkInTime.size() <= 40 &&
+        data.checkOutTime is string && data.checkOutTime.size() <= 40 &&
+        data.workDurationMinutes is number && data.workDurationMinutes >= 0 && data.workDurationMinutes <= 1440 &&
+        data.status in ['Present', 'Late', 'Absent', 'On Leave', 'Half Day'] &&
+        data.correctionReason is string && data.correctionReason.size() <= 300 &&
+        data.correctedByUid is string && data.correctedByUid.size() <= 128 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidLeaveType(data) {
+      return data.keys().hasAll([
+          'id', 'name', 'code', 'annualQuotaDays', 'description',
+          'isPaid', 'requiresHrApproval', 'status', 'visibility',
+          'createdByUid', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'name', 'code', 'annualQuotaDays', 'description',
+          'isPaid', 'requiresHrApproval', 'status', 'visibility',
+          'createdByUid', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.name is string && data.name.size() >= 2 && data.name.size() <= 60 &&
+        data.code is string && data.code.size() >= 2 && data.code.size() <= 16 && data.code.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.annualQuotaDays is number && data.annualQuotaDays >= 0 && data.annualQuotaDays <= 365 &&
+        data.description is string && data.description.size() >= 2 && data.description.size() <= 250 &&
+        data.isPaid is bool &&
+        data.requiresHrApproval is bool &&
+        data.status in ['Active', 'Inactive'] &&
+        data.visibility == 'organization' &&
+        isValidId(data.createdByUid) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidLeaveBalance(data) {
+      return data.keys().hasAll([
+          'id', 'employeeUid', 'employeeId', 'employeeName', 'managerUid',
+          'hrUid', 'year', 'casualTotal', 'casualUsed', 'sickTotal',
+          'sickUsed', 'earnedTotal', 'earnedUsed', 'unpaidUsed',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'employeeUid', 'employeeId', 'employeeName', 'managerUid',
+          'hrUid', 'year', 'casualTotal', 'casualUsed', 'sickTotal',
+          'sickUsed', 'earnedTotal', 'earnedUsed', 'unpaidUsed',
+          'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.employeeUid) &&
+        data.employeeId is string && data.employeeId.size() >= 2 && data.employeeId.size() <= 32 && data.employeeId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.employeeName is string && data.employeeName.size() >= 2 && data.employeeName.size() <= 100 &&
+        isValidId(data.managerUid) &&
+        isValidId(data.hrUid) &&
+        data.year is number && data.year >= 2020 && data.year <= 2100 &&
+        data.casualTotal is number && data.casualTotal >= 0 && data.casualTotal <= 100 &&
+        data.casualUsed is number && data.casualUsed >= 0 && data.casualUsed <= 100 &&
+        data.sickTotal is number && data.sickTotal >= 0 && data.sickTotal <= 100 &&
+        data.sickUsed is number && data.sickUsed >= 0 && data.sickUsed <= 100 &&
+        data.earnedTotal is number && data.earnedTotal >= 0 && data.earnedTotal <= 100 &&
+        data.earnedUsed is number && data.earnedUsed >= 0 && data.earnedUsed <= 100 &&
+        data.unpaidUsed is number && data.unpaidUsed >= 0 && data.unpaidUsed <= 365 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidLeaveRequest(data) {
+      return data.keys().hasAll([
+          'id', 'employeeUid', 'employeeId', 'employeeName', 'departmentName',
+          'managerUid', 'managerName', 'hrUid', 'leaveTypeCode', 'leaveTypeName',
+          'startDate', 'endDate', 'totalDays', 'reason', 'status',
+          'reviewerUid', 'reviewerName', 'reviewerRemarks', 'reviewedAt',
+          'balanceDeducted', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'employeeUid', 'employeeId', 'employeeName', 'departmentName',
+          'managerUid', 'managerName', 'hrUid', 'leaveTypeCode', 'leaveTypeName',
+          'startDate', 'endDate', 'totalDays', 'reason', 'status',
+          'reviewerUid', 'reviewerName', 'reviewerRemarks', 'reviewedAt',
+          'balanceDeducted', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.employeeUid) &&
+        data.employeeId is string && data.employeeId.size() >= 2 && data.employeeId.size() <= 32 && data.employeeId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.employeeName is string && data.employeeName.size() >= 2 && data.employeeName.size() <= 100 &&
+        data.departmentName is string && data.departmentName.size() >= 2 && data.departmentName.size() <= 80 &&
+        isValidId(data.managerUid) &&
+        data.managerName is string && data.managerName.size() >= 1 && data.managerName.size() <= 100 &&
+        isValidId(data.hrUid) &&
+        data.leaveTypeCode is string && data.leaveTypeCode.size() >= 2 && data.leaveTypeCode.size() <= 16 && data.leaveTypeCode.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.leaveTypeName is string && data.leaveTypeName.size() >= 2 && data.leaveTypeName.size() <= 60 &&
+        data.startDate is string && data.startDate.size() == 10 && data.startDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+        data.endDate is string && data.endDate.size() == 10 && data.endDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+        data.totalDays is number && data.totalDays >= 0.5 && data.totalDays <= 365 &&
+        data.reason is string && data.reason.size() >= 3 && data.reason.size() <= 500 &&
+        data.status in ['Pending', 'Pending HR Approval', 'Approved', 'Rejected', 'Cancelled'] &&
+        data.reviewerUid is string && data.reviewerUid.size() <= 128 &&
+        data.reviewerName is string && data.reviewerName.size() <= 100 &&
+        data.reviewerRemarks is string && data.reviewerRemarks.size() <= 500 &&
+        data.reviewedAt is string && data.reviewedAt.size() <= 40 &&
+        data.balanceDeducted is bool &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidWorkplaceRequest(data) {
+      return data.keys().hasAll([
+          'id', 'employeeUid', 'employeeId', 'employeeName', 'departmentName',
+          'managerUid', 'managerName', 'hrUid', 'category', 'title',
+          'description', 'targetDate', 'priority', 'status', 'assignedToRole',
+          'reviewerUid', 'reviewerName', 'remarks', 'resolvedAt',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'employeeUid', 'employeeId', 'employeeName', 'departmentName',
+          'managerUid', 'managerName', 'hrUid', 'category', 'title',
+          'description', 'targetDate', 'priority', 'status', 'assignedToRole',
+          'reviewerUid', 'reviewerName', 'remarks', 'resolvedAt',
+          'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.employeeUid) &&
+        data.employeeId is string && data.employeeId.size() >= 2 && data.employeeId.size() <= 32 && data.employeeId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.employeeName is string && data.employeeName.size() >= 2 && data.employeeName.size() <= 100 &&
+        data.departmentName is string && data.departmentName.size() >= 2 && data.departmentName.size() <= 80 &&
+        isValidId(data.managerUid) &&
+        data.managerName is string && data.managerName.size() >= 1 && data.managerName.size() <= 100 &&
+        isValidId(data.hrUid) &&
+        data.category in [
+          'Work From Home',
+          'Permission / Short Leave',
+          'Shift Change',
+          'Attendance Correction',
+          'Equipment Request',
+          'IT Support',
+          'HR Support',
+          'Other Workplace Requests'
+        ] &&
+        data.title is string && data.title.size() >= 3 && data.title.size() <= 120 &&
+        data.description is string && data.description.size() >= 3 && data.description.size() <= 800 &&
+        data.targetDate is string && data.targetDate.size() == 10 && data.targetDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+        data.priority in ['Low', 'Medium', 'High', 'Urgent'] &&
+        data.status in ['Submitted', 'Under Review', 'Approved', 'Rejected', 'Resolved'] &&
+        data.assignedToRole in ['Manager', 'HR', 'IT Support'] &&
+        data.reviewerUid is string && data.reviewerUid.size() <= 128 &&
+        data.reviewerName is string && data.reviewerName.size() <= 100 &&
+        data.remarks is string && data.remarks.size() <= 500 &&
+        data.resolvedAt is string && data.resolvedAt.size() <= 40 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidProject(data) {
+      return data.keys().hasAll([
+          'id', 'name', 'code', 'departmentId', 'departmentName',
+          'leadUid', 'leadName', 'hrUid', 'description', 'startDate',
+          'deadline', 'status', 'progressPercent', 'teamMemberUids',
+          'visibility', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'name', 'code', 'departmentId', 'departmentName',
+          'leadUid', 'leadName', 'hrUid', 'description', 'startDate',
+          'deadline', 'status', 'progressPercent', 'teamMemberUids',
+          'visibility', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.name is string && data.name.size() >= 2 && data.name.size() <= 120 &&
+        data.code is string && data.code.size() >= 2 && data.code.size() <= 24 && data.code.matches('^[a-zA-Z0-9_\\-]+$') &&
+        isValidId(data.departmentId) &&
+        data.departmentName is string && data.departmentName.size() >= 2 && data.departmentName.size() <= 80 &&
+        isValidId(data.leadUid) &&
+        data.leadName is string && data.leadName.size() >= 2 && data.leadName.size() <= 100 &&
+        isValidId(data.hrUid) &&
+        data.description is string && data.description.size() >= 3 && data.description.size() <= 800 &&
+        data.startDate is string && data.startDate.size() == 10 && data.startDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+        data.deadline is string && data.deadline.size() == 10 && data.deadline.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+        data.status in ['Planning', 'Active', 'On Hold', 'Completed'] &&
+        data.progressPercent is number && data.progressPercent >= 0 && data.progressPercent <= 100 &&
+        data.teamMemberUids is list && data.teamMemberUids.size() <= 10 &&
+        (data.teamMemberUids.size() == 0 || (data.teamMemberUids.size() > 0 && data.teamMemberUids[0] is string)) &&
+        data.visibility == 'organization' &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidWorkTask(data) {
+      return data.keys().hasAll([
+          'id', 'projectId', 'projectName', 'title', 'description',
+          'assigneeUid', 'assigneeId', 'assigneeName', 'departmentName',
+          'assignedByUid', 'assignedByName', 'hrUid', 'priority',
+          'dueDate', 'status', 'progressPercent', 'deliverableNotes',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'projectId', 'projectName', 'title', 'description',
+          'assigneeUid', 'assigneeId', 'assigneeName', 'departmentName',
+          'assignedByUid', 'assignedByName', 'hrUid', 'priority',
+          'dueDate', 'status', 'progressPercent', 'deliverableNotes',
+          'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.projectId) &&
+        data.projectName is string && data.projectName.size() >= 2 && data.projectName.size() <= 120 &&
+        data.title is string && data.title.size() >= 2 && data.title.size() <= 140 &&
+        data.description is string && data.description.size() >= 2 && data.description.size() <= 800 &&
+        isValidId(data.assigneeUid) &&
+        data.assigneeId is string && data.assigneeId.size() >= 2 && data.assigneeId.size() <= 32 && data.assigneeId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.assigneeName is string && data.assigneeName.size() >= 2 && data.assigneeName.size() <= 100 &&
+        data.departmentName is string && data.departmentName.size() >= 2 && data.departmentName.size() <= 80 &&
+        isValidId(data.assignedByUid) &&
+        data.assignedByName is string && data.assignedByName.size() >= 2 && data.assignedByName.size() <= 100 &&
+        isValidId(data.hrUid) &&
+        data.priority in ['Low', 'Medium', 'High', 'Critical'] &&
+        data.dueDate is string && data.dueDate.size() == 10 && data.dueDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+        data.status in ['To Do', 'In Progress', 'In Review', 'Completed'] &&
+        data.progressPercent is number && data.progressPercent >= 0 && data.progressPercent <= 100 &&
+        data.deliverableNotes is string && data.deliverableNotes.size() <= 600 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidPerformanceReview(data) {
+      return data.keys().hasAll([
+          'id', 'employeeUid', 'employeeId', 'employeeName', 'departmentName',
+          'designation', 'reviewerUid', 'reviewerName', 'hrUid', 'reviewCycle',
+          'reviewDate', 'overallRating', 'technicalScore', 'collaborationScore',
+          'reliabilityScore', 'keyStrengths', 'growthAreas', 'goalsNextPeriod',
+          'employeeSelfAssessment', 'status', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'employeeUid', 'employeeId', 'employeeName', 'departmentName',
+          'designation', 'reviewerUid', 'reviewerName', 'hrUid', 'reviewCycle',
+          'reviewDate', 'overallRating', 'technicalScore', 'collaborationScore',
+          'reliabilityScore', 'keyStrengths', 'growthAreas', 'goalsNextPeriod',
+          'employeeSelfAssessment', 'status', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.employeeUid) &&
+        data.employeeId is string && data.employeeId.size() >= 2 && data.employeeId.size() <= 32 && data.employeeId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.employeeName is string && data.employeeName.size() >= 2 && data.employeeName.size() <= 100 &&
+        data.departmentName is string && data.departmentName.size() >= 2 && data.departmentName.size() <= 80 &&
+        data.designation is string && data.designation.size() >= 2 && data.designation.size() <= 80 &&
+        isValidId(data.reviewerUid) &&
+        data.reviewerName is string && data.reviewerName.size() >= 2 && data.reviewerName.size() <= 100 &&
+        isValidId(data.hrUid) &&
+        data.reviewCycle is string && data.reviewCycle.size() >= 2 && data.reviewCycle.size() <= 60 &&
+        data.reviewDate is string && data.reviewDate.size() == 10 && data.reviewDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+        data.overallRating is number && data.overallRating >= 1 && data.overallRating <= 5 &&
+        data.technicalScore is number && data.technicalScore >= 1 && data.technicalScore <= 5 &&
+        data.collaborationScore is number && data.collaborationScore >= 1 && data.collaborationScore <= 5 &&
+        data.reliabilityScore is number && data.reliabilityScore >= 1 && data.reliabilityScore <= 5 &&
+        data.keyStrengths is string && data.keyStrengths.size() >= 2 && data.keyStrengths.size() <= 800 &&
+        data.growthAreas is string && data.growthAreas.size() >= 2 && data.growthAreas.size() <= 800 &&
+        data.goalsNextPeriod is string && data.goalsNextPeriod.size() >= 2 && data.goalsNextPeriod.size() <= 800 &&
+        data.employeeSelfAssessment is string && data.employeeSelfAssessment.size() <= 800 &&
+        data.status in ['Draft', 'Published', 'Acknowledged'] &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidNotificationItem(data) {
+      return data.keys().hasAll([
+          'id', 'recipientUid', 'senderUid', 'category', 'title',
+          'message', 'relatedEntityId', 'relatedRoute', 'isRead',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'recipientUid', 'senderUid', 'category', 'title',
+          'message', 'relatedEntityId', 'relatedRoute', 'isRead',
+          'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.recipientUid) &&
+        isValidId(data.senderUid) &&
+        data.category in ['Leave', 'Request', 'Attendance', 'Announcement', 'Profile', 'Task', 'Performance'] &&
+        data.title is string && data.title.size() >= 2 && data.title.size() <= 120 &&
+        data.message is string && data.message.size() >= 2 && data.message.size() <= 500 &&
+        data.relatedEntityId is string && data.relatedEntityId.size() <= 128 &&
+        data.relatedRoute is string && data.relatedRoute.size() >= 1 && data.relatedRoute.size() <= 80 &&
+        data.isRead is bool &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidAnnouncement(data) {
+      return data.keys().hasAll([
+          'id', 'title', 'content', 'targetDepartment', 'priority',
+          'authorUid', 'authorName', 'status', 'visibility',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'title', 'content', 'targetDepartment', 'priority',
+          'authorUid', 'authorName', 'status', 'visibility',
+          'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.title is string && data.title.size() >= 3 && data.title.size() <= 140 &&
+        data.content is string && data.content.size() >= 5 && data.content.size() <= 1500 &&
+        data.targetDepartment is string && data.targetDepartment.size() >= 1 && data.targetDepartment.size() <= 80 &&
+        data.priority in ['Normal', 'Important', 'Urgent'] &&
+        isValidId(data.authorUid) &&
+        data.authorName is string && data.authorName.size() >= 2 && data.authorName.size() <= 100 &&
+        data.status in ['Published', 'Archived'] &&
+        data.visibility == 'organization' &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidHoliday(data) {
+      return data.keys().hasAll([
+          'id', 'name', 'date', 'type', 'description',
+          'visibility', 'createdByUid', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'name', 'date', 'type', 'description',
+          'visibility', 'createdByUid', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.name is string && data.name.size() >= 2 && data.name.size() <= 100 &&
+        data.date is string && data.date.size() == 10 && data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') &&
+        data.type in ['Public Holiday', 'Company Holiday', 'Optional Holiday'] &&
+        data.description is string && data.description.size() <= 250 &&
+        data.visibility == 'organization' &&
+        isValidId(data.createdByUid) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidCompanySettings(data) {
+      return data.keys().hasAll([
+          'id', 'companyName', 'tagline', 'timezone', 'workingDaysCsv',
+          'workStartTime', 'workEndTime', 'lateGraceMinutes',
+          'requireHrSecondApprovalForLongLeave', 'longLeaveThresholdDays',
+          'autoApproveEmployeeRegistration', 'status', 'updatedByUid',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'companyName', 'tagline', 'timezone', 'workingDaysCsv',
+          'workStartTime', 'workEndTime', 'lateGraceMinutes',
+          'requireHrSecondApprovalForLongLeave', 'longLeaveThresholdDays',
+          'autoApproveEmployeeRegistration', 'status', 'updatedByUid',
+          'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.companyName is string && data.companyName.size() >= 2 && data.companyName.size() <= 100 &&
+        data.tagline is string && data.tagline.size() >= 2 && data.tagline.size() <= 140 &&
+        data.timezone is string && data.timezone.size() >= 2 && data.timezone.size() <= 60 &&
+        data.workingDaysCsv is string && data.workingDaysCsv.size() >= 3 && data.workingDaysCsv.size() <= 60 &&
+        data.workStartTime is string && data.workStartTime.size() == 5 && data.workStartTime.matches('^[0-9]{2}:[0-9]{2}$') &&
+        data.workEndTime is string && data.workEndTime.size() == 5 && data.workEndTime.matches('^[0-9]{2}:[0-9]{2}$') &&
+        data.lateGraceMinutes is number && data.lateGraceMinutes >= 0 && data.lateGraceMinutes <= 180 &&
+        data.requireHrSecondApprovalForLongLeave is bool &&
+        data.longLeaveThresholdDays is number && data.longLeaveThresholdDays >= 1 && data.longLeaveThresholdDays <= 60 &&
+        data.autoApproveEmployeeRegistration is bool &&
+        data.status == 'active' &&
+        isValidId(data.updatedByUid) &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidAuditLog(data) {
+      return data.keys().hasAll([
+          'id', 'actorUid', 'actorName', 'actorRole', 'hrUid',
+          'action', 'category', 'targetId', 'details',
+          'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'actorUid', 'actorName', 'actorRole', 'hrUid',
+          'action', 'category', 'targetId', 'details',
+          'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.actorUid) &&
+        data.actorName is string && data.actorName.size() >= 2 && data.actorName.size() <= 100 &&
+        data.actorRole in ['Employee', 'Manager', 'HR'] &&
+        isValidId(data.hrUid) &&
+        data.action is string && data.action.size() >= 2 && data.action.size() <= 120 &&
+        data.category in ['Employee', 'Department', 'Manager', 'Attendance', 'Leave', 'Request', 'Project', 'Performance', 'Settings', 'Security'] &&
+        isValidId(data.targetId) &&
+        data.details is string && data.details.size() >= 2 && data.details.size() <= 600 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    // =========================================================================
+    // COLLECTION 1: /admins/{adminUid}
+    // =========================================================================
+    match /admins/{adminUid} {
+      allow get: if isVerifiedUser() && isValidId(adminUid) && (request.auth.uid == adminUid || isAdmin());
+      allow list: if false;
+      allow create: if isVerifiedUser() && isValidId(adminUid) && isValidAdminRecord(incoming()) &&
+        incoming().uid == adminUid &&
+        incoming().grantedByUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+      allow update: if isVerifiedUser() && isValidId(adminUid) && isValidAdminRecord(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+      allow delete: if isVerifiedUser() && isValidId(adminUid) && isAdmin();
+    }
+
+    // =========================================================================
+    // COLLECTION 2: /profiles/{profileId}
+    // =========================================================================
+    match /profiles/{profileId} {
+      allow get: if isVerifiedUser() && isValidId(profileId) && (
+        request.auth.uid == profileId ||
+        existing().ownerUid == request.auth.uid ||
+        existing().managerUid == request.auth.uid ||
+        existing().hrUid == request.auth.uid ||
+        isAdmin()
+      );
+      allow list: if isVerifiedUser() && (
+        existing().ownerUid == request.auth.uid ||
+        existing().managerUid == request.auth.uid ||
+        existing().hrUid == request.auth.uid ||
+        isBootstrappedAdmin()
+      );
+      allow create: if isVerifiedUser() && isValidId(profileId) && isValidProfile(incoming()) &&
+        incoming().uid == profileId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time && (
+          (
+            incoming().uid == request.auth.uid &&
+            incoming().ownerUid == request.auth.uid &&
+            incoming().role == 'Employee' &&
+            incoming().status in ['Active', 'Pending Approval']
+          ) ||
+          isAdmin()
+        );
+      allow update: if isVerifiedUser() && isValidId(profileId) && isValidProfile(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().ownerUid == existing().ownerUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (
+            existing().ownerUid == request.auth.uid &&
+            incoming().role == existing().role &&
+            incoming().status == existing().status &&
+            incoming().departmentId == existing().departmentId &&
+            incoming().designation == existing().designation &&
+            incoming().managerUid == existing().managerUid &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['fullName', 'avatarInitials', 'updatedAt'])
+          )
+        );
+      allow delete: if isVerifiedUser() && isValidId(profileId) && isAdmin();
+    }
+
+    // =========================================================================
+    // COLLECTION 3: /profile_private/{userId} (Pillar 6 PII Isolation)
+    // =========================================================================
+    match /profile_private/{userId} {
+      allow get: if isVerifiedUser() && isValidId(userId) && (
+        request.auth.uid == userId ||
+        existing().ownerUid == request.auth.uid ||
+        isAdmin()
+      );
+      allow list: if isVerifiedUser() && (
+        existing().ownerUid == request.auth.uid ||
+        isBootstrappedAdmin()
+      );
+      allow create: if isVerifiedUser() && isValidId(userId) && isValidProfilePrivate(incoming()) &&
+        incoming().uid == userId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        profileExists(userId) && (
+          (request.auth.uid == userId && incoming().ownerUid == request.auth.uid) ||
+          isAdmin()
+        );
+      allow update: if isVerifiedUser() && isValidId(userId) && isValidProfilePrivate(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().ownerUid == existing().ownerUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (
+            (request.auth.uid == userId || existing().ownerUid == request.auth.uid) &&
+            incoming().email == existing().email &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['contactNumber', 'emergencyContact', 'address', 'updatedAt'])
+          )
+        );
+      allow delete: if isVerifiedUser() && isValidId(userId) && isAdmin();
+    }
+
+    // =========================================================================
+    // COLLECTION 4: /departments/{departmentId}
+    // =========================================================================
+    match /departments/{departmentId} {
+      allow get: if isVerifiedUser() && isValidId(departmentId) && (
+        existing().visibility == 'organization' || isAdmin()
+      );
+      allow list: if isVerifiedUser() && (
+        existing().visibility == 'organization' ||
+        existing().createdByUid == request.auth.uid ||
+        isBootstrappedAdmin()
+      );
+      allow create: if isVerifiedUser() && isValidId(departmentId) && isValidDepartment(incoming()) &&
+        incoming().id == departmentId &&
+        incoming().createdByUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+      allow update: if isVerifiedUser() && isValidId(departmentId) && isValidDepartment(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().createdByUid == existing().createdByUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+      allow delete: if isVerifiedUser() && isValidId(departmentId) && isAdmin();
+    }
+
+    // =========================================================================
+    // COLLECTION 5: /attendance_records/{recordId}
+    // =========================================================================
+    match /attendance_records/{recordId} {
+      allow get: if isVerifiedUser() && isValidId(recordId) && (
+        existing().employeeUid == request.auth.uid ||
+        existing().managerUid == request.auth.uid ||
+        existing().hrUid == request.auth.uid ||
+        isAdmin()
+      );
+      allow list: if isVerifiedUser() && (
+        existing().employeeUid == request.auth.uid ||
+        existing().managerUid == request.auth.uid ||
+        existing().hrUid == request.auth.uid ||
+        isBootstrappedAdmin()
+      );
+      allow create: if isVerifiedUser() && isValidId(recordId) && isValidAttendanceRecord(incoming()) &&
+        incoming().id == recordId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        profileExists(incoming().employeeUid) && (
+          incoming().employeeUid == request.auth.uid ||
+          isAdmin()
+        );
+      allow update: if isVerifiedUser() && isValidId(recordId) && isValidAttendanceRecord(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().employeeUid == existing().employeeUid &&
+        incoming().date == existing().date &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (
+            existing().employeeUid == request.auth.uid &&
+            existing().checkOutTime == '' &&
+            incoming().checkInTime == existing().checkInTime &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['checkOutTime', 'workDurationMinutes', 'updatedAt'])
+          )
+        );
+      allow delete: if isVerifiedUser() && isValidId(recordId) && isAdmin();
+    }
+
+    // =========================================================================
+    // COLLECTION 6: /leave_types/{leaveTypeId}
+    // =========================================================================
+    match /leave_types/{leaveTypeId} {
+      allow get: if isVerifiedUser() && isValidId(leaveTypeId) && (
+        existing().visibility == 'organization' || isAdmin()
+      );
+      allow list: if isVerifiedUser() && (
+        existing().visibility == 'organization' ||
+        existing().createdByUid == request.auth.uid ||
+        isBootstrappedAdmin()
+      );
+      allow create: if isVerifiedUser() && isValidId(leaveTypeId) && isValidLeaveType(incoming()) &&
+        incoming().id == leaveTypeId &&
+        incoming().createdByUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+      allow update: if isVerifiedUser() && isValidId(leaveTypeId) && isValidLeaveType(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().createdByUid == existing().createdByUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+      allow delete: if isVerifiedUser() && isValidId(leaveTypeId) && isAdmin();
+    }
+
+    // =========================================================================
+    // COLLECTION 7: /leave_balances/{balanceId}
+    // =========================================================================
+    match /leave_balances/{balanceId} {
+      allow get: if isVerifiedUser() && isValidId(balanceId) && (
+        existing().employeeUid == request.auth.uid ||
+        existing().managerUid == request.auth.uid ||
+        existing().hrUid == request.auth.uid ||
+        isAdmin()
+      );
+      allow list: if isVerifiedUser() && (
+        existing().employeeUid == request.auth.uid ||
+        existing().managerUid == request.auth.uid ||
+        existing().hrUid == request.auth.uid ||
+        isBootstrappedAdmin()
+      );
+      allow create: if isVerifiedUser() && isValidId(balanceId) && isValidLeaveBalance(incoming()) &&
+        incoming().id == balanceId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        profileExists(incoming().employeeUid) && (
+          (
+            incoming().employeeUid == request.auth.uid &&
+            incoming().casualTotal == 12 &&
+            incoming().casualUsed == 0 &&
+            incoming().sickTotal == 10 &&
+            incoming().sickUsed == 0 &&
+            incoming().earnedTotal == 15 &&
+            incoming().earnedUsed == 0 &&
+            incoming().unpaidUsed == 0
+          ) ||
+          isAdmin()
+        );
+      allow update: if isVerifiedUser() && isValidId(balanceId) && isValidLeaveBalance(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().employeeUid == existing().employeeUid &&
+        incoming().year == existing().year &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (
+            existing().managerUid == request.auth.uid &&
+            existing().employeeUid != request.auth.uid &&
+            incoming().casualTotal == existing().casualTotal &&
+            incoming().sickTotal == existing().sickTotal &&
+            incoming().earnedTotal == existing().earnedTotal &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['casualUsed', 'sickUsed', 'earnedUsed', 'unpaidUsed', 'updatedAt'])
+          )
+        );
+      allow delete: if isVerifiedUser() && isValidId(balanceId) && isAdmin();
+    }
+
+    // =========================================================================
+    // COLLECTION 8: /leave_requests/{requestId}
+    // =========================================================================
+    match /leave_requests/{requestId} {
+      allow get: if isVerifiedUser() && isValidId(requestId) && (
+        existing().employeeUid == request.auth.uid ||
+        existing().managerUid == request.auth.uid ||
+        existing().hrUid == request.auth.uid ||
+        isAdmin()
+      );
+      allow list: if isVerifiedUser() && (
+        existing().employeeUid == request.auth.uid ||
+        existing().managerUid == request.auth.uid ||
+        existing().hrUid == request.auth.uid ||
+        isBootstrappedAdmin()
+      );
+      allow create: if isVerifiedUser() && isValidId(requestId) && isValidLeaveRequest(incoming()) &&
+        incoming().id == requestId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        profileExists(incoming().employeeUid) && (
+          (
+            incoming().employeeUid == request.auth.uid &&
+            incoming().status == 'Pending' &&
+            incoming().balanceDeducted == false &&
+            incoming().reviewerUid == ''
+          ) ||
+          isAdmin()
+        );
+      allow update: if isVerifiedUser() && isValidId(requestId) && isValidLeaveRequest(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().employeeUid == existing().employeeUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (
+            existing().employeeUid == request.auth.uid &&
+            existing().status == 'Pending' &&
+            incoming().status == 'Cancelled' &&
+            incoming().balanceDeducted == existing().balanceDeducted &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          ) ||
+          (
+            existing().managerUid == request.auth.uid &&
+            existing().employeeUid != request.auth.uid &&
+            existing().status == 'Pending' &&
+            incoming().status in ['Approved', 'Rejected', 'Pending HR Approval'] &&
+            incoming().reviewerUid == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'reviewerUid', 'reviewerName', 'reviewerRemarks',
+              'reviewedAt', 'balanceDeducted', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if isVerifiedUser() && isValidId(requestId) && isAdmin();
+    }
+
+    // =========================================================================
+    // COLLECTION 9: /workplace_requests/{requestId}
+    // =========================================================================
+    match /workplace_requests/{requestId} {
+      allow get: if isVerifiedUser() && isValidId(requestId) && (
+        existing().employeeUid == request.auth.uid ||
+        existing().managerUid == request.auth.uid ||
+        existing().hrUid == request.auth.uid ||
+        isAdmin()
+      );
+      allow list: if isVerifiedUser() && (
+        existing().employeeUid == request.auth.uid ||
+        existing().managerUid == request.auth.uid ||
+        existing().hrUid == request.auth.uid ||
+        isBootstrappedAdmin()
+      );
+      allow create: if isVerifiedUser() && isValidId(requestId) && isValidWorkplaceRequest(incoming()) &&
+        incoming().id == requestId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        profileExists(incoming().employeeUid) && (
+          (
+            incoming().employeeUid == request.auth.uid &&
+            incoming().status == 'Submitted' &&
+            incoming().reviewerUid == ''
+          ) ||
+          isAdmin()
+        );
+      allow update: if isVerifiedUser() && isValidId(requestId) && isValidWorkplaceRequest(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().employeeUid == existing().employeeUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (
+            existing().managerUid == request.auth.uid &&
+            existing().employeeUid != request.auth.uid &&
+            existing().status in ['Submitted', 'Under Review'] &&
+            incoming().status in ['Under Review', 'Approved', 'Rejected', 'Resolved'] &&
+            incoming().reviewerUid == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'reviewerUid', 'reviewerName', 'remarks', 'resolvedAt', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if isVerifiedUser() && isValidId(requestId) && isAdmin();
+    }
+
+    // =========================================================================
+    // COLLECTION 10: /projects/{projectId}
+    // =========================================================================
+    match /projects/{projectId} {
+      allow get: if isVerifiedUser() && isValidId(projectId) && (
+        existing().visibility == 'organization' ||
+        existing().leadUid == request.auth.uid ||
+        existing().hrUid == request.auth.uid ||
+        isAdmin()
+      );
+      allow list: if isVerifiedUser() && (
+        existing().visibility == 'organization' ||
+        existing().leadUid == request.auth.uid ||
+        existing().hrUid == request.auth.uid ||
+        isBootstrappedAdmin()
+      );
+      allow create: if isVerifiedUser() && isValidId(projectId) && isValidProject(incoming()) &&
+        incoming().id == projectId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+      allow update: if isVerifiedUser() && isValidId(projectId) && isValidProject(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (
+            existing().leadUid == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'progressPercent', 'updatedAt'])
+          )
+        );
+      allow delete: if isVerifiedUser() && isValidId(projectId) && isAdmin();
+    }
+
+    // =========================================================================
+    // COLLECTION 11: /work_tasks/{taskId}
+    // =========================================================================
+    match /work_tasks/{taskId} {
+      allow get: if isVerifiedUser() && isValidId(taskId) && (
+        existing().assigneeUid == request.auth.uid ||
+        existing().assignedByUid == request.auth.uid ||
+        existing().hrUid == request.auth.uid ||
+        isAdmin()
+      );
+      allow list: if isVerifiedUser() && (
+        existing().assigneeUid == request.auth.uid ||
+        existing().assignedByUid == request.auth.uid ||
+        existing().hrUid == request.auth.uid ||
+        isBootstrappedAdmin()
+      );
+      allow create: if isVerifiedUser() && isValidId(taskId) && isValidWorkTask(incoming()) &&
+        incoming().id == taskId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        profileExists(incoming().assigneeUid) &&
+        isAdmin();
+      allow update: if isVerifiedUser() && isValidId(taskId) && isValidWorkTask(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().assigneeUid == existing().assigneeUid &&
+        incoming().projectId == existing().projectId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (
+            existing().assigneeUid == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'progressPercent', 'deliverableNotes', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if isVerifiedUser() && isValidId(taskId) && isAdmin();
+    }
+
+    // =========================================================================
+    // COLLECTION 12: /performance_reviews/{reviewId}
+    // =========================================================================
+    match /performance_reviews/{reviewId} {
+      allow get: if isVerifiedUser() && isValidId(reviewId) && (
+        existing().employeeUid == request.auth.uid ||
+        existing().reviewerUid == request.auth.uid ||
+        existing().hrUid == request.auth.uid ||
+        isAdmin()
+      );
+      allow list: if isVerifiedUser() && (
+        existing().employeeUid == request.auth.uid ||
+        existing().reviewerUid == request.auth.uid ||
+        existing().hrUid == request.auth.uid ||
+        isBootstrappedAdmin()
+      );
+      allow create: if isVerifiedUser() && isValidId(reviewId) && isValidPerformanceReview(incoming()) &&
+        incoming().id == reviewId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        profileExists(incoming().employeeUid) &&
+        isAdmin();
+      allow update: if isVerifiedUser() && isValidId(reviewId) && isValidPerformanceReview(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().employeeUid == existing().employeeUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (
+            existing().employeeUid == request.auth.uid &&
+            existing().status in ['Published', 'Acknowledged'] &&
+            incoming().status in ['Published', 'Acknowledged'] &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'employeeSelfAssessment', 'status', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if isVerifiedUser() && isValidId(reviewId) && isAdmin();
+    }
+
+    // =========================================================================
+    // COLLECTION 13: /notifications/{notificationId}
+    // =========================================================================
+    match /notifications/{notificationId} {
+      allow get: if isVerifiedUser() && isValidId(notificationId) && (
+        existing().recipientUid == request.auth.uid ||
+        existing().senderUid == request.auth.uid ||
+        isAdmin()
+      );
+      allow list: if isVerifiedUser() && (
+        existing().recipientUid == request.auth.uid ||
+        existing().senderUid == request.auth.uid ||
+        isBootstrappedAdmin()
+      );
+      allow create: if isVerifiedUser() && isValidId(notificationId) && isValidNotificationItem(incoming()) &&
+        incoming().id == notificationId &&
+        incoming().senderUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        profileExists(incoming().recipientUid);
+      allow update: if isVerifiedUser() && isValidId(notificationId) && isValidNotificationItem(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().recipientUid == existing().recipientUid &&
+        incoming().senderUid == existing().senderUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          isAdmin() ||
+          (
+            existing().recipientUid == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['isRead', 'updatedAt'])
+          )
+        );
+      allow delete: if isVerifiedUser() && isValidId(notificationId) && (
+        existing().recipientUid == request.auth.uid || isAdmin()
+      );
+    }
+
+    // =========================================================================
+    // COLLECTION 14: /announcements/{announcementId}
+    // =========================================================================
+    match /announcements/{announcementId} {
+      allow get: if isVerifiedUser() && isValidId(announcementId) && (
+        existing().visibility == 'organization' || isAdmin()
+      );
+      allow list: if isVerifiedUser() && (
+        existing().visibility == 'organization' ||
+        existing().authorUid == request.auth.uid ||
+        isBootstrappedAdmin()
+      );
+      allow create: if isVerifiedUser() && isValidId(announcementId) && isValidAnnouncement(incoming()) &&
+        incoming().id == announcementId &&
+        incoming().authorUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+      allow update: if isVerifiedUser() && isValidId(announcementId) && isValidAnnouncement(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().authorUid == existing().authorUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+      allow delete: if isVerifiedUser() && isValidId(announcementId) && isAdmin();
+    }
+
+    // =========================================================================
+    // COLLECTION 15: /holidays/{holidayId}
+    // =========================================================================
+    match /holidays/{holidayId} {
+      allow get: if isVerifiedUser() && isValidId(holidayId) && (
+        existing().visibility == 'organization' || isAdmin()
+      );
+      allow list: if isVerifiedUser() && (
+        existing().visibility == 'organization' ||
+        existing().createdByUid == request.auth.uid ||
+        isBootstrappedAdmin()
+      );
+      allow create: if isVerifiedUser() && isValidId(holidayId) && isValidHoliday(incoming()) &&
+        incoming().id == holidayId &&
+        incoming().createdByUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+      allow update: if isVerifiedUser() && isValidId(holidayId) && isValidHoliday(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().createdByUid == existing().createdByUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+      allow delete: if isVerifiedUser() && isValidId(holidayId) && isAdmin();
+    }
+
+    // =========================================================================
+    // COLLECTION 16: /company_settings/{settingId}
+    // =========================================================================
+    match /company_settings/{settingId} {
+      allow get: if isVerifiedUser() && isValidId(settingId) && (
+        existing().status == 'active' || isAdmin()
+      );
+      allow list: if false;
+      allow create: if isVerifiedUser() && isValidId(settingId) && isValidCompanySettings(incoming()) &&
+        incoming().id == settingId &&
+        incoming().updatedByUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+      allow update: if isVerifiedUser() && isValidId(settingId) && isValidCompanySettings(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedByUid == request.auth.uid &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+      allow delete: if isVerifiedUser() && isValidId(settingId) && isAdmin();
+    }
+
+    // =========================================================================
+    // COLLECTION 17: /audit_logs/{logId} (Immutable Audit Trail)
+    // =========================================================================
+    match /audit_logs/{logId} {
+      allow get: if isVerifiedUser() && isValidId(logId) && (
+        existing().actorUid == request.auth.uid ||
+        existing().hrUid == request.auth.uid ||
+        isAdmin()
+      );
+      allow list: if isVerifiedUser() && (
+        existing().actorUid == request.auth.uid ||
+        existing().hrUid == request.auth.uid ||
+        isBootstrappedAdmin()
+      );
+      allow create: if isVerifiedUser() && isValidId(logId) && isValidAuditLog(incoming()) &&
+        incoming().id == logId &&
+        incoming().actorUid == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update, delete: if false;
+    }
+
+  }
+}

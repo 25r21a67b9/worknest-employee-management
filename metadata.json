@@ -1,0 +1,6 @@
+{
+  "name": "WorkNest – Employee & Leave Management System",
+  "description": "Enterprise employee portal for attendance tracking, multi-stage leave management, workplace service requests, department administration, and workforce analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
